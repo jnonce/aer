@@ -15,7 +15,6 @@ import qualified Data.List as List
 import qualified Data.Vector as Vector
 import System.Console.CmdArgs
 import System.Exit (exitFailure)
-import System.IO (stdout)
 import System.IO.Error (tryIOError)
 import Text.ParserCombinators.Parsec
 import qualified Text.Parsec.Error as ParsecError
@@ -101,16 +100,16 @@ safeIO f value = do
       f value
       return True
 
-processPathOnJSON :: Expression -> FilePath -> IO ()
-processPathOnJSON expr filename = do
+processJSON :: Expression -> IO B.ByteString -> IO ()
+processJSON expr jsonBytesM = do
   let matcherFromExpr = matcherOf expr
-  jsonBytes <- B.readFile filename
+  jsonBytes <- jsonBytesM
   jsonRoot <- liftAsIO (decodedJson jsonBytes)
   forM_ (matcherFromExpr jsonRoot) (putStrLnByteString . encode)
   where decodedJson :: B.ByteString -> Either String Value
         decodedJson json = eitherDecode json :: Either String Value
         putStrLnByteString byteString = do
-          B.hPutStr stdout byteString
+          B.putStr byteString
           putStrLn ""
 
 main = do
@@ -118,5 +117,11 @@ main = do
   expr <- liftAsIO $ parse parserExpression "expr" (expr parsedOptions)
   when (showExpr parsedOptions) $ print expr
 
-  results <- forM (files parsedOptions) (safeIO print . processPathOnJSON expr)
-  unless (List.and results) exitFailure
+  let safeProcessJSON = safeIO pure . processJSON expr
+
+  if List.null (files parsedOptions) then do
+    isSuccess <- safeProcessJSON B.getContents
+    unless isSuccess exitFailure
+  else do
+    results <- forM (files parsedOptions) (safeProcessJSON . B.readFile)
+    unless (List.and results) exitFailure
